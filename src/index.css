@@ -1,0 +1,43 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif;
+}
+
+:root {
+  --bg: #F0F2F5;
+  --ink: #0F172A;
+  --accent: #4F46E5;
+  --accent-soft: #EEF2FF;
+  --border: #E2E8F0;
+  --card-bg: #FFFFFF;
+  --text-main: #334155;
+  --text-muted: #64748B;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--ink);
+}
+
+.bento-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.bento-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
