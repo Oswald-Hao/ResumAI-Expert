@@ -2,47 +2,82 @@ import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Briefcase, 
-  FileText, 
-  Loader2, 
-  Sparkles, 
-  TrendingUp, 
+import {
+  Briefcase,
+  FileText,
+  Loader2,
+  Sparkles,
+  TrendingUp,
   Target,
   FileEdit,
-  Settings
+  Settings,
+  GitCompare
 } from 'lucide-react';
 import { optimizeResumeAndRecommendJobs, OptimizationResult } from './services/llm';
+import { optimizeIteratively } from './services/iterativeOptimizer';
+import { IterativeOptimizationResult, OptimizationMode, OptimizationStage } from './services/types';
 import { cn } from './lib/utils';
+import IterationProgress from './components/IterationProgress';
+import ComparisonView from './components/ComparisonView';
 
 export default function App() {
   const [resumeText, setResumeText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<OptimizationResult | null>(null);
-  const [activeTab, setActiveTab] = useState<'optimized' | 'jobs'>('optimized');
+  const [activeTab, setActiveTab] = useState<'optimized' | 'jobs' | 'comparison'>('optimized');
   const [error, setError] = useState<string | null>(null);
 
   const [language, setLanguage] = useState<'zh' | 'en'>('zh');
   const [provider, setProvider] = useState<'gemini' | 'glm'>('gemini');
   const [apiKey, setApiKey] = useState('');
+  const [mode, setMode] = useState<OptimizationMode>('iterative');
+
+  const [iterativeResult, setIterativeResult] = useState<IterativeOptimizationResult | null>(null);
+  const [currentStage, setCurrentStage] = useState<OptimizationStage | null>(null);
+  const [stageDetail, setStageDetail] = useState('');
+  const [currentRound, setCurrentRound] = useState(1);
 
   const handleOptimize = async () => {
     if (!resumeText.trim()) return;
     setIsProcessing(true);
     setError(null);
+    setIterativeResult(null);
+    setCurrentRound(1);
+
     try {
-      const data = await optimizeResumeAndRecommendJobs(resumeText, {
-        language,
-        provider,
-        apiKey
-      });
-      setResult(data);
+      if (mode === 'baseline') {
+        const data = await optimizeResumeAndRecommendJobs(resumeText, {
+          language,
+          provider,
+          apiKey
+        });
+        setResult(data);
+      } else {
+        const data = await optimizeIteratively(resumeText, {
+          language,
+          provider,
+          apiKey,
+          mode,
+          onProgress: (stage, detail) => {
+            setCurrentStage(stage);
+            setStageDetail(detail);
+            if (detail.match(/第(\d)轮/)) {
+              setCurrentRound(parseInt(detail.match(/第(\d)轮/)?.[1] || '1'));
+            }
+          }
+        });
+        setIterativeResult(data);
+        setResult(data.finalResult);
+      }
     } catch (err: any) {
       setError(err.message || 'An error occurred while analyzing the resume.');
     } finally {
       setIsProcessing(false);
+      setCurrentStage(null);
     }
   };
+
+  const showComparisonTab = mode === 'iterative' && iterativeResult !== null;
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--ink)] font-sans selection:bg-[var(--accent-soft)] selection:text-[var(--accent)] flex flex-col p-6">
@@ -61,11 +96,11 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-grow flex flex-col max-w-[1024px] mx-auto w-full">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-grow">
-          
+
           {/* Left Column: Input */}
           <div className="lg:col-span-5 flex flex-col space-y-4">
             <div className="bento-card flex-1 min-h-[600px]">
-              
+
               {/* Settings Area */}
               <div className="flex justify-between items-center bg-[var(--bg)] p-3 rounded-lg border border-[var(--border)] mb-4">
                 <div className="flex items-center gap-2 text-[var(--ink)] font-bold text-[13px]">
@@ -74,13 +109,13 @@ export default function App() {
                 </div>
                 <div className="flex gap-3 items-center">
                   <div className="flex bg-[var(--card-bg)] rounded overflow-hidden border border-[var(--border)]">
-                    <button 
+                    <button
                       onClick={() => setLanguage('zh')}
                       className={cn("px-3 py-1 text-[12px] font-bold transition-colors", language === 'zh' ? "bg-[var(--accent)] text-white" : "text-[var(--text-muted)] hover:text-[var(--ink)]")}
                     >
                       中文
                     </button>
-                    <button 
+                    <button
                       onClick={() => setLanguage('en')}
                       className={cn("px-3 py-1 text-[12px] font-bold transition-colors border-l border-[var(--border)]", language === 'en' ? "bg-[var(--accent)] text-white" : "text-[var(--text-muted)] hover:text-[var(--ink)]")}
                     >
@@ -90,11 +125,11 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="bg-[var(--bg)] p-3 rounded-lg border border-[var(--border)] mb-6 space-y-3">
+              <div className="bg-[var(--bg)] p-3 rounded-lg border border-[var(--border)] mb-4 space-y-3">
                  <div className="flex justify-between items-center">
                    <span className="text-[13px] font-bold text-[var(--ink)]">AI 模型</span>
-                   <select 
-                     value={provider} 
+                   <select
+                     value={provider}
                      onChange={(e) => setProvider(e.target.value as 'gemini' | 'glm')}
                      className="bg-[var(--card-bg)] border border-[var(--border)] px-2 py-1 rounded text-[12px] font-bold text-[var(--ink)] outline-none focus:border-[var(--accent)]"
                    >
@@ -102,9 +137,35 @@ export default function App() {
                      <option value="glm">Zhipu GLM-4 (API Key)</option>
                    </select>
                  </div>
+
+                 {/* Optimization Mode Toggle */}
+                 <div className="flex justify-between items-center pt-2 border-t border-[var(--border)]">
+                   <span className="text-[13px] font-bold text-[var(--ink)]">优化模式</span>
+                   <div className="flex bg-[var(--card-bg)] rounded overflow-hidden border border-[var(--border)]">
+                     <button
+                       onClick={() => setMode('iterative')}
+                       className={cn("px-3 py-1 text-[12px] font-bold transition-colors", mode === 'iterative' ? "bg-[var(--accent)] text-white" : "text-[var(--text-muted)] hover:text-[var(--ink)]")}
+                     >
+                       多轮迭代
+                     </button>
+                     <button
+                       onClick={() => setMode('baseline')}
+                       className={cn("px-3 py-1 text-[12px] font-bold transition-colors border-l border-[var(--border)]", mode === 'baseline' ? "bg-[var(--accent)] text-white" : "text-[var(--text-muted)] hover:text-[var(--ink)]")}
+                     >
+                       单次优化
+                     </button>
+                   </div>
+                 </div>
+
+                 {mode === 'iterative' && (
+                   <div className="text-[11px] text-[var(--text-muted)] leading-relaxed bg-[var(--accent-soft)] p-2 rounded-lg">
+                     多轮迭代模式：自动分析弱点 → 针对性优化 → 质量评分 → 迭代精修（最多3轮）
+                   </div>
+                 )}
+
                  {provider === 'glm' && (
                    <div className="flex flex-col gap-1.5 pt-2 border-t border-[var(--border)]">
-                      <input 
+                      <input
                         type="password"
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
@@ -126,7 +187,7 @@ export default function App() {
                   </span>
                 )}
               </div>
-              
+
               <div className="flex-1 relative pb-4">
                 <textarea
                   className="w-full h-full min-h-[400px] resize-none border border-[var(--border)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)] text-[var(--text-main)] placeholder-[var(--text-muted)] p-3 rounded-lg text-[14px] leading-relaxed font-sans bg-[var(--bg)] outline-none transition-all"
@@ -148,8 +209,8 @@ export default function App() {
                 disabled={isProcessing || !resumeText.trim()}
                 className={cn(
                   "w-full py-3 px-6 rounded-lg flex items-center justify-center gap-2 font-semibold text-[14px] transition-all duration-200 border-none",
-                  isProcessing 
-                    ? "bg-[var(--accent-soft)] text-[var(--accent)] cursor-not-allowed" 
+                  isProcessing
+                    ? "bg-[var(--accent-soft)] text-[var(--accent)] cursor-not-allowed"
                     : !resumeText.trim()
                       ? "bg-[var(--bg)] text-[var(--text-muted)] cursor-not-allowed"
                       : "bg-[var(--ink)] text-white hover:opacity-90 active:scale-[0.98]"
@@ -158,12 +219,12 @@ export default function App() {
                 {isProcessing ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Analyzing & Optimizing...
+                    {mode === 'iterative' ? '多轮迭代优化中...' : 'Analyzing & Optimizing...'}
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-5 h-5" />
-                    Optimize & Find Matches
+                    {mode === 'iterative' ? '多轮迭代优化' : 'Optimize & Find Matches'}
                   </>
                 )}
               </button>
@@ -181,6 +242,15 @@ export default function App() {
                 <p className="text-[14px] text-[var(--text-muted)] max-w-sm text-center leading-relaxed">
                   Paste your resume on the left and our AI will rewrite it for maximum impact and suggest perfect job roles based on your experience.
                 </p>
+              </div>
+            ) : isProcessing && mode === 'iterative' ? (
+              <div className="bento-card h-full min-h-[600px]">
+                <IterationProgress
+                  stage={currentStage}
+                  detail={stageDetail}
+                  currentRound={currentRound}
+                  maxRounds={3}
+                />
               </div>
             ) : isProcessing ? (
               <div className="bento-card h-[600px] flex flex-col items-center justify-center text-center relative overflow-hidden">
@@ -225,6 +295,20 @@ export default function App() {
                       {result.jobRecommendations.length}
                     </span>
                   </button>
+                  {showComparisonTab && (
+                    <button
+                      onClick={() => setActiveTab('comparison')}
+                      className={cn(
+                        "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-bold text-[14px] transition-all outline-none",
+                        activeTab === 'comparison'
+                          ? "bg-[var(--card-bg)] text-[var(--accent)] border border-[var(--border)] shadow-sm"
+                          : "text-[var(--text-muted)] hover:text-[var(--ink)] hover:bg-[var(--border)]"
+                      )}
+                    >
+                      <GitCompare className="w-4 h-4" />
+                      对比分析
+                    </button>
+                  )}
                 </div>
 
                 {/* Content Area */}
@@ -267,7 +351,7 @@ export default function App() {
                                 {job.matchScore}%
                               </div>
                             </div>
-                            
+
                             <div className="space-y-4 mt-4">
                               <div>
                                 <h4 className="flex items-center gap-2 text-[12px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1">Role Overview</h4>
@@ -289,6 +373,18 @@ export default function App() {
                             </div>
                           </div>
                         ))}
+                      </motion.div>
+                    )}
+
+                    {activeTab === 'comparison' && iterativeResult && (
+                      <motion.div
+                        key="comparison"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <ComparisonView data={iterativeResult} />
                       </motion.div>
                     )}
                   </AnimatePresence>

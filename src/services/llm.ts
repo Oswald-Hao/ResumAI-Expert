@@ -1,7 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
 const PRO_MODEL = "gemini-3.1-pro-preview";
 
 export interface OptimizationResult {
@@ -20,9 +18,62 @@ export interface OptimizeOptions {
   apiKey?: string;
 }
 
+function cleanJSONResponse(text: string): string {
+  let cleaned = text.trim();
+  if (cleaned.startsWith("```json")) {
+    cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
+  } else if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
+  }
+  return cleaned;
+}
+
+export async function callLLM(prompt: string, options: OptimizeOptions): Promise<string> {
+  if (options.provider === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const response = await ai.models.generateContent({
+      model: PRO_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+      },
+    });
+    const text = response.text;
+    if (!text) throw new Error("No text returned from Gemini API");
+    return text;
+  } else if (options.provider === 'glm') {
+    if (!options.apiKey) {
+      throw new Error("Zhipu (GLM) API Key is required.");
+    }
+    const res = await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${options.apiKey}`
+      },
+      body: JSON.stringify({
+        model: "glm-4",
+        messages: [
+          { role: "system", content: "You are a helpful assistant that strictly outputs JSON format." },
+          { role: "user", content: prompt }
+        ]
+      })
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`GLM API Error ${res.status}: ${errText}`);
+    }
+    const data = await res.json();
+    let textResult = data.choices?.[0]?.message?.content;
+    if (!textResult) throw new Error("Invalid response format from GLM API");
+    return cleanJSONResponse(textResult);
+  }
+  throw new Error("Invalid provider");
+}
+
 export async function optimizeResumeAndRecommendJobs(resumeText: string, options: OptimizeOptions): Promise<OptimizationResult> {
   const langText = options.language === 'zh' ? 'Chinese (Simplified)' : 'English';
-  
+
   const prompt = `You are an expert career counselor, ATS resume optimizer, and recruiter.
 I will provide you with a user's resume or career background.
 
@@ -49,6 +100,7 @@ ${resumeText}
 `;
 
   if (options.provider === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const response = await ai.models.generateContent({
       model: PRO_MODEL,
       contents: prompt,
@@ -84,8 +136,7 @@ ${resumeText}
     if (!options.apiKey) {
       throw new Error("Zhipu (GLM) API Key is required.");
     }
-    
-    // Call Zhipu API
+
     const res = await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
       method: "POST",
       headers: {
@@ -109,17 +160,10 @@ ${resumeText}
     const data = await res.json();
     let textResult = data.choices?.[0]?.message?.content;
     if (!textResult) throw new Error("Invalid response format from GLM API");
-    
-    // Clean markdown if present
-    textResult = textResult.trim();
-    if (textResult.startsWith("```json")) {
-      textResult = textResult.replace(/^```json/, '').replace(/```$/, '').trim();
-    } else if (textResult.startsWith("```")) {
-      textResult = textResult.replace(/^```/, '').replace(/```$/, '').trim();
-    }
 
+    textResult = cleanJSONResponse(textResult);
     return JSON.parse(textResult) as OptimizationResult;
   }
-  
+
   throw new Error("Invalid provider");
 }
